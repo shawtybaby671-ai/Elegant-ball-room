@@ -1,274 +1,225 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>DegenFamous Bingo</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Georgia&display=swap" rel="stylesheet">
-  <style>
-    body { margin: 0; min-height: 100vh; background: linear-gradient(#F5F5DC, #E8E1D4); color: #4A2C2A; font-family: 'Georgia', serif; display: flex; flex-direction: column; align-items: center; padding: 20px; box-sizing: border-box; }
-    h1 { font-family: 'Playfair Display', serif; color: #8B0000; font-size: 36px; text-shadow: 0 0 10px #D4AF37; margin: 10px; }
-    .brass-panel { background: rgba(255,255,220,0.9); border: 3px double #D4AF37; border-radius: 20px; padding: 20px; margin: 10px; width: 90%; max-width: 500px; box-shadow: 0 0 20px rgba(212,175,55,0.5); }
-    .logo { width: 160px; height: 160px; background: url('logo.png') center/cover; border-radius: 50%; border: 5px solid #D4AF37; box-shadow: 0 0 30px #D4AF37; margin: 20px; }
-    button { background: linear-gradient(to bottom, #D4AF37, #B8860B); color: #4A2C2A; border: none; padding: 15px 30px; margin: 10px; border-radius: 30px; font-size: 18px; font-weight: bold; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,0.3); transition: all 0.2s; }
-    button:active { transform: scale(0.95); }
-    .card-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; background: #F5F5DC; padding: 15px; border: 4px double #D4AF37; border-radius: 15px; }
-    .cell { background: white; height: 70px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 20px; border-radius: 8px; position: relative; }
-    .header-cell { background: #8B0000; color: #D4AF37; font-size: 24px; }
-    .free { background: #D4AF37 !important; color: white; }
-    .marked { background: #B8860B; color: white; }
-    .ink-blot { position: absolute; width: 60px; height: 60px; background: radial-gradient(circle, rgba(0,0,0,0.4) 20%, transparent 70%); animation: blot 0.5s ease-out; }
-    @keyframes blot { from { transform: scale(0); opacity: 1; } to { transform: scale(1); opacity: 0.6; } }
-    .glow-near { box-shadow: 0 0 15px #D4AF37; }
-    .confetti { position: fixed; pointer-events: none; }
-    .spinner { border: 4px solid #D4AF37; border-top: 4px solid #8B0000; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-  </style>
-</head>
-<body>
-  <div class="logo"></div>
-  <h1>DegenFamous Bingo</h1>
+import asyncio
+import logging
+import re
+import json
+import hmac
+import hashlib
+import threading
+import random
+from datetime import datetime, timedelta
+from random import shuffle, sample
+from io import BytesIO
 
-  <div id="dashboard" class="brass-panel">
-    <h2>Welcome back, <span id="playerName">Degen</span>!</h2>
-    <p>Diamonds: <strong id="diamonds">50</strong> 💎</p>
-    <p>XP: <strong id="xp">0</strong> | VIP Level: <strong id="vip">1</strong> (Perks in future promotions!)</p>
-    <p>Affiliate earnings this week: <strong id="affEarnings">0</strong> 💎</p>
-    <p>Your referral link: <span id="refLink">copy me</span></p>
-    <button id="claimFreeBtn">Claim Weekly Free Card</button>
-    <button onclick="showUpcoming()">View Upcoming Games</button>
-    <button onclick="showJoinModal()">Join Current Game</button>
-    <button onclick="backToGroup()">Back to Group Chat</button>
-  </div>
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from flask import Flask, request, jsonify, abort
+from replit import db
+from PIL import Image, ImageDraw, ImageFont
 
-  <!-- Continued in Part 2 -->
-</body>
-</html>
-  <div id="joinModal" class="brass-panel" style="display:none;">
-    <h2>Join Game</h2>
-    <p>Current Pattern: <span id="joinPattern">Single Line</span></p>
-    <p>Difficulty: <span id="joinDiff">Easy</span> (Wilds: <span id="joinWilds">0</span>)</p>
-    <label>Mode: 
-      <select id="modeSelect">
-        <option value="free">Freeplay (Full House only)</option>
-        <option value="diamond">Diamond Boost</option>
-      </select>
-    </label>
-    <label id="cardSliderLabel" style="display:none;">Bonus Cards: <span id="cardCount">1</span></label>
-    <input type="range" id="cardSlider" min="1" max="50" value="1" style="display:none;">
-    <p>Cost: <span id="joinCost">0</span> diamonds</p>
-    <button onclick="confirmJoin()">Join</button>
-    <button onclick="closeModal('joinModal')">Cancel</button>
-  </div>
+logging.basicConfig(level=logging.INFO)
 
-  <div id="puzzleModal" class="brass-panel" style="display:none;">
-    <h2>Skill Challenge to Enter</h2>
-    <p id="puzzleQuestion"></p>
-    <input type="text" id="puzzleAnswer" placeholder="Your answer..." style="width:80%; padding:10px; margin:10px;">
-    <button onclick="submitPuzzle()">Submit</button>
-    <p id="puzzleFeedback" style="color:#8B0000;"></p>
-  </div>
+# Load from environment or fallback (Render uses env vars)
+import os
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
 
-  <div id="gameScreen" style="display:none;">
-    <h2>Game in Progress</h2>
-    <p>Pattern: <span id="gamePattern"></span> | Called: <span id="calledCount">0</span>/75</p>
-    <div id="flashboard" style="display: grid; grid-template-columns: repeat(15, 1fr); gap: 5px; margin:20px;"></div>
-    <div id="cardsContainer"></div>
-    <p>Your best card: <strong id="nearWin">Waiting for calls...</strong></p>
-    <p>Hall tease: <span id="groupTease"></span></p>
-    <button onclick="backToGroup()">Back to Group Chat</button>
-  </div>
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-  <div id="winModal" class="brass-panel" style="display:none;">
-    <h2>BINGO!</h2>
-    <p>You share the win with <span id="winShares">1</span> players</p>
-    <p>Your prize: <strong id="winPrize">0</strong> diamonds</p>
-    <canvas id="confettiCanvas" width="400" height="600"></canvas>
-    <button onclick="showTipModal()">Tip the Caller (0-50 diamonds)</button>
-    <button onclick="showRedemptionPuzzle()">Redeem Prize</button>
-  </div>
+app = Flask(__name__)
 
-  <div id="tipModal" class="brass-panel" style="display:none;">
-    <h2>Thank the Caller</h2>
-    <label>Tip amount: <input type="range" id="tipSlider" min="0" max="50" value="10"></label>
-    <p><span id="tipAmount">10</span> diamonds</p>
-    <button onclick="submitTip()">Send Tip</button>
-    <button onclick="closeModal('tipModal')">No thanks</button>
-  </div>
+# Constants
+TIP_REGEX = re.compile(r"Amount\s*:\s*([\d,]+\.?\d*)\s*USDT", re.IGNORECASE)
+BINGOPAYS_USERNAME = "bingopays"
+DIAMONDS_PER_USDT = 1000
+GAME_INTERVAL = 10  # average seconds per call
 
-  <!-- Part 3: Script in next response -->
-  <script>
-    Telegram.WebApp.ready();
-    Telegram.WebApp.expand();
-    Telegram.WebApp.enableClosingConfirmation();
+# DB keys
+CURRENT_GAME = "current_game"
+PLAYER_PREFIX = "player_"
+JACKPOT_POOL = "jackpot_pool"
+JACKPOT_LIMIT = "jackpot_limit"
+GAME_COUNT = "game_count"
 
-    const user = Telegram.WebApp.initDataUnsafe.user || { id: 123, first_name: 'Degen' };
-    const initData = Telegram.WebApp.initData; // Full raw for auth
-    const API_BASE = 'https://your-agent-repl-name.your-username.replit.app/api'; // CHANGE TO YOUR AGENT URL
+# Initialize jackpot
+if JACKPOT_POOL not in db:
+    db[JACKPOT_POOL] = 0
+    db[JACKPOT_LIMIT] = 50
+    db[GAME_COUNT] = 0
 
-    document.getElementById('playerName').innerText = user.first_name;
+# Patterns (expanded example)
+PATTERNS = {
+    "single_line": {"name": "Single Line", "difficulty": "easy", "wilds": 0, "marks": 5},
+    "four_corners": {"name": "Four Corners", "difficulty": "medium", "wilds": 1, "marks": 4},
+    "full_house": {"name": "Full House", "difficulty": "hard", "wilds": 2, "marks": 25},
+    # Add more patterns as needed
+}
 
-    // Customizable skill questions
-    const skillQuestions = [
-      { question: "What is 7 × 8 - 12?", answer: "44" },
-      { question: "FOMO stands for Fear Of _____ Out?", answer: "Missing" },
-      { question: "Next in B-I-N-G-O sequence after G-60?", answer: "O-75" },
-      // Add more as needed
-    ];
+# Helper functions
+def get_player(user_id):
+    key = f"{PLAYER_PREFIX}{user_id}"
+    if key not in db:
+        db[key] = {
+            "diamonds": 50,
+            "xp": 0,
+            "vip": 1,
+            "referral_parent": None,
+            "aff_earnings": 0,
+            "last_diamond": None,
+            "cards": []
+        }
+    return db[key]
 
-    let gameInterval = null;
-    let currentGame = null;
+def validate_init_data(init_data: str):
+    # Basic validation – improve with full HMAC in production
+    if not init_data:
+        return False
+    # Extract user from init_data (simplified)
+    try:
+        data = json.loads(hashlib.sha256(init_data.encode()).hexdigest())  # Placeholder
+        return True
+    except:
+        return False
 
-    // Utility
-    function closeModal(id) {
-      document.getElementById(id).style.display = 'none';
+def generate_card(double_action=False):
+    card = []
+    ranges = [(1,15), (16,30), (31,45), (46,60), (61,75)]
+    for r in ranges:
+        nums = random.sample(range(r[0], r[1]+1), 5)
+        if double_action:
+            card.append([(n, random.choice(range(r[0], r[1]+1))) for n in nums])
+        else:
+            card.append(nums)
+    card[2][2] = "FREE"
+    return card
+
+def pattern_complete(card, pattern, called, wilds_outside):
+    # Simplified Full House check – expand for all patterns
+    if pattern == "full_house":
+        marked = 24  # exclude free
+        for row in card:
+            for cell in row:
+                if cell != "FREE" and cell not in called:
+                    marked -= 1
+        return marked == 24
+    # Add other pattern logic
+    return False
+
+def calculate_prize_pool(game):
+    # Simplified – use dynamic allocation
+    return 1000  # Example
+
+def get_near_win_tease(game):
+    # Count players 1-3 away
+    close = random.randint(0, 5)
+    if close >= 3:
+        return "Someone's getting hot – multiple close calls!"
+    elif close >= 1:
+        return "Someone's ONE away! Hold your breath!"
+    return None
+
+def create_ball_image(ball, letter):
+    img = Image.new('RGB', (300, 300), color='#F5F5DC')
+    draw = ImageDraw.Draw(img)
+    draw.ellipse((30,30,270,270), fill='#D4AF37', outline='#8B0000', width=8)
+    try:
+        font = ImageFont.truetype("arial.ttf", 80)
+    except:
+        font = ImageFont.load_default()
+    draw.text((150, 130), f"{letter}-{ball}", fill='#4A2C2A', font=font, anchor="mm")
+    buf = BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return buf
+
+# Flask API endpoints
+@app.route('/api/player', methods=['GET'])
+def api_player():
+    if not validate_init_data(request.headers.get('auth', '')):
+        abort(401)
+    # Extract user_id from init_data (implement parsing)
+    user_id = 123456  # Placeholder
+    player = get_player(user_id)
+    return jsonify({
+        "diamonds": player["diamonds"],
+        "xp": player["xp"],
+        "vip": player["vip"],
+        "affEarnings": player["aff_earnings"],
+        "canClaimFree": player["last_diamond"] is None or (datetime.now().timestamp() - player["last_diamond"]) > 604800
+    })
+
+# Add other API endpoints from previous parts (join_game, game_state, tip_caller, etc.)
+
+# Group handlers
+@dp.message(Command("play"))
+async def cmd_play(message: types.Message):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🎟️ Enter the Bingo Hall", web_app=types.WebAppInfo(url="https://your-miniapp.onrender.com"))
+    ]])
+    await message.reply("Welcome to DegenFamous Bingo! Tap below to enter your personal hall.", reply_markup=keyboard)
+
+@dp.message(Command("newgame"))
+async def cmd_newgame(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.reply("Only the hall manager can start games!")
+        return
+    db[CURRENT_GAME] = {
+        "chat_id": message.chat.id,
+        "pattern": "single_line",
+        "difficulty": "easy",
+        "wilds": 0,
+        "called": [],
+        "players": {},
+        "ball_bag": list(range(1,76)),
+        "start_time": datetime.now().timestamp()
     }
+    shuffle(db[CURRENT_GAME]["ball_bag"])
+    await message.reply("🔔 New game starting! Pattern: Single Line\nJoin via the Mini App – good luck!")
 
-    function backToGroup() {
-      Telegram.WebApp.close();
-    }
+# Game loop
+async def game_loop():
+    while True:
+        game = db.get(CURRENT_GAME)
+        if game and len(game["called"]) < 75:
+            ball = game["ball_bag"].pop(0)
+            game["called"].append(ball)
+            db[CURRENT_GAME] = game
 
-    async function apiGet(endpoint) {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
-        headers: { 'auth': initData }
-      });
-      if (!res.ok) throw new Error('API error');
-      return res.json();
-    }
+            letter = "BINGO"[(ball-1)//15]
+            await bot.send_message(game["chat_id"], f"Calling **{letter}-{ball}**!", parse_mode="Markdown")
+            img = create_ball_image(ball, letter)
+            await bot.send_photo(game["chat_id"], photo=img)
 
-    async function apiPost(endpoint, body = {}) {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'auth': initData },
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) throw new Error('API error');
-      return res.json();
-    }
+            winners = []  # check_wins logic
+            if winners:
+                await handle_wins(winners, game)
+            else:
+                tease = get_near_win_tease(game)
+                if tease:
+                    await bot.send_message(game["chat_id"], tease)
 
-    // Dashboard load
-    async function loadDashboard() {
-      const data = await apiGet('/player');
-      document.getElementById('diamonds').innerText = data.diamonds;
-      document.getElementById('xp').innerText = data.xp;
-      document.getElementById('vip').innerText = data.vip;
-      document.getElementById('affEarnings').innerText = data.affEarnings;
-      document.getElementById('refLink').innerText = `t.me/${(await bot.getMe()).username}?start=ref_${user.id}`;
-      document.getElementById('claimFreeBtn').style.display = data.canClaimFree ? 'block' : 'none';
-    }
+            await asyncio.sleep(GAME_INTERVAL + random.uniform(-3, 3))
+        else:
+            await asyncio.sleep(5)
 
-    // Join modal
-    async function showJoinModal() {
-      const game = await apiGet('/current_game');
-      document.getElementById('joinPattern').innerText = game.pattern;
-      document.getElementById('joinDiff').innerText = game.difficulty;
-      document.getElementById('joinWilds').innerText = game.wilds;
-      const isDiamond = document.getElementById('modeSelect').value === 'diamond';
-      document.getElementById('cardSliderLabel').style.display = isDiamond ? 'block' : 'none';
-      document.getElementById('cardSlider').style.display = isDiamond ? 'block' : 'none';
-      document.getElementById('joinCost').innerText = isDiamond ? game.costPerCard * document.getElementById('cardSlider').value : 0;
-      document.getElementById('joinModal').style.display = 'block';
-    }
+async def handle_wins(winners, game):
+    pool = calculate_prize_pool(game)
+    share = pool // len(winners)
+    for user_id, _ in winners:
+        player = get_player(user_id)
+        player["diamonds"] += share
+        db[f"{PLAYER_PREFIX}{user_id}"] = player
+        await bot.send_message(user_id, f"🎉 BINGO! You win {share} diamonds!")
+    await bot.send_message(game["chat_id"], f"🎊 We have {len(winners)} winner(s)! Congratulations!")
 
-    document.getElementById('cardSlider').oninput = () => {
-      const count = document.getElementById('cardSlider').value;
-      document.getElementById('cardCount').innerText = count;
-      // Update cost
-    };
+# Start tasks
+asyncio.create_task(game_loop())
 
-    async function confirmJoin() {
-      const mode = document.getElementById('modeSelect').value;
-      const cards = mode === 'diamond' ? parseInt(document.getElementById('cardSlider').value) : 1;
-      if (mode === 'diamond') showPuzzle();
-      else await apiPost('/join_game', { mode, cards });
-      closeModal('joinModal');
-      startGameView();
-    }
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
 
-    // Puzzle
-    function showPuzzle() {
-      const q = skillQuestions[Math.floor(Math.random() * skillQuestions.length)];
-      document.getElementById('puzzleQuestion').innerText = q.question;
-      document.getElementById('puzzleModal').style.display = 'block';
-      currentPuzzle = q;
-    }
+threading.Thread(target=run_flask, daemon=True).start()
 
-    async function submitPuzzle() {
-      const answer = document.getElementById('puzzleAnswer').value.trim();
-      if (answer.toLowerCase() === currentPuzzle.answer.toLowerCase()) {
-        await apiPost('/puzzle_submit', { correct: true });
-        document.getElementById('puzzleFeedback').innerText = 'Correct! Joining...';
-        Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-        setTimeout(() => {
-          closeModal('puzzleModal');
-          startGameView();
-        }, 1500);
-      } else {
-        document.getElementById('puzzleFeedback').innerText = 'Wrong – try again (diamonds safe)';
-        Telegram.WebApp.HapticFeedback.notificationOccurred('error');
-      }
-    }
-
-    // Game View
-    async function startGameView() {
-      document.getElementById('dashboard').style.display = 'none';
-      document.getElementById('gameScreen').style.display = 'block';
-      renderCards();
-      gameInterval = setInterval(pollGameState, 3000);
-      pollGameState();
-    }
-
-    async function pollGameState() {
-      const state = await apiGet('/game_state');
-      document.getElementById('gamePattern').innerText = state.pattern;
-      document.getElementById('calledCount').innerText = state.called.length;
-      document.getElementById('nearWin').innerText = state.personalAway;
-      document.getElementById('groupTease').innerText = state.groupTease || 'Quiet hall...';
-      updateDaub(state.called);
-      if (state.win) showWin(state.win);
-    }
-
-    function renderCards() {
-      // Full card rendering logic from server data – placeholder for multiple cards
-      const container = document.getElementById('cardsContainer');
-      container.innerHTML = '<div class="card-grid"><div class="header-cell">B</div><div class="header-cell">I</div><!-- etc --></div>';
-    }
-
-    function updateDaub(called) {
-      // Auto-ink blot on new calls + glow
-      called.forEach(num => {
-        // Find cells, add .marked + ink div
-      });
-    }
-
-    function showWin(winData) {
-      clearInterval(gameInterval);
-      document.getElementById('winShares').innerText = winData.shares;
-      document.getElementById('winPrize').innerText = winData.prize;
-      document.getElementById('gameScreen').style.display = 'none';
-      document.getElementById('winModal').style.display = 'block';
-      startConfetti();
-    }
-
-    function showTipModal() {
-      document.getElementById('tipSlider').oninput = () => document.getElementById('tipAmount').innerText = document.getElementById('tipSlider').value;
-      document.getElementById('tipModal').style.display = 'block';
-    }
-
-    async function submitTip() {
-      const amount = parseInt(document.getElementById('tipSlider').value);
-      await apiPost('/tip_caller', { amount });
-      closeModal('tipModal');
-      Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-    }
-
-    // Confetti placeholder
-    function startConfetti() {
-      // Canvas gold confetti animation
-    }
-
-    loadDashboard();
-  </script>
-</body>
-</html>
+if __name__ == "__main__":
+    asyncio.run(main())
